@@ -20,63 +20,73 @@ Status SelectEventHandler::InitEventHandler() {
 
 Status SelectEventHandler::WaitForEvent() {
     if(max_sock_fd_ >= 0) {
-        if(select(max_sock_fd_+1,&readfds_,&writefds_,NULL,&tv_) < 0) {
+        if(select(max_sock_fd_+1,&readfds_,&writefds_,NULL,&tv_) >= 0) {
             return STATUS_OK;
         }
     }
     return STATUS_ERROR;
 }
 
-bool SelectEventHandler::GetNextReadyEvent(int &fd) {
+bool SelectEventHandler::GetNextReadyEvent(Event &ev) {
     auto is_set = [&](int conn_fd){
         return FD_ISSET(conn_fd,&readfds_) || FD_ISSET(conn_fd,&writefds_);
     };
     // maybe can be optimized here
     auto iter = std::find_if(conn_fds_.begin(),conn_fds_.end(),is_set);
     if(iter != conn_fds_.end()) {
-        fd = *iter;
+        ev.fd = *iter;
         return true;
     }
     return false;
 }
 
-bool SelectEventHandler::CanRead(int fd) {
-    return FD_ISSET(fd,&readfds_);
+bool SelectEventHandler::CanRead(Event &ev) {
+    return FD_ISSET(ev.fd,&readfds_);
 }
 
-bool SelectEventHandler::CanWrite(int fd) {
-    return FD_ISSET(fd,&writefds_);
+bool SelectEventHandler::CanWrite(Event &ev) {
+    return FD_ISSET(ev.fd,&writefds_);
 }
 
 Status SelectEventHandler::AddReadEvent(int fd) {
-    auto iter = std::find(conn_fds_.begin(),conn_fds_.end(),-1);
-    if(iter != conn_fds_.end()) {
-        *iter = fd;
-        FD_SET(fd,&readfds_);
-        if(fd > max_sock_fd_) max_sock_fd_ = fd;
-        return STATUS_OK;
+    auto iter = std::find(conn_fds_.begin(),conn_fds_.end(),fd);
+    if(iter == conn_fds_.end()) {
+        iter = std::find(conn_fds_.begin(),conn_fds_.end(),-1);
+        if(iter != conn_fds_.end()) {
+            *iter = fd;
+        } else {
+            return STATUS_ERROR;
+        }
     }
-    return STATUS_ERROR;
+    FD_SET(fd,&readfds_);
+    if(fd > max_sock_fd_) max_sock_fd_ = fd;
+    return STATUS_OK;
 }
 
 Status SelectEventHandler::AddWriteEvent(int fd) {
-    auto iter = std::find(conn_fds_.begin(),conn_fds_.end(),-1);
-    if(iter != conn_fds_.end()) {
-        *iter = fd;
-        FD_SET(fd,&writefds_);
-        if(fd > max_sock_fd_) max_sock_fd_ = fd;
-        return STATUS_OK;
+    auto iter = std::find(conn_fds_.begin(),conn_fds_.end(),fd);
+    if(iter == conn_fds_.end()) {
+        iter = std::find(conn_fds_.begin(),conn_fds_.end(),-1);
+        if(iter != conn_fds_.end()) {
+            *iter = fd;
+        } else {
+            return STATUS_ERROR;
+        }
     }
-    return STATUS_ERROR;
+    FD_SET(fd,&writefds_);
+    if(fd > max_sock_fd_) max_sock_fd_ = fd;
+    return STATUS_OK;
 }
 
 Status SelectEventHandler::CloseReadEvent(int fd) {
     auto iter = std::find(conn_fds_.begin(),conn_fds_.end(),fd);
     if(iter != conn_fds_.end()) {
         FD_CLR(fd,&readfds_);
-        *iter = -1;
-        if(fd == max_sock_fd_) {
-            max_sock_fd_ = *std::max_element(conn_fds_.begin(),conn_fds_.end());
+        if(!FD_ISSET(fd,&writefds_)) {
+            *iter = -1;
+            if(fd == max_sock_fd_) {
+                max_sock_fd_ = *std::max_element(conn_fds_.begin(),conn_fds_.end());
+            }
         }
         return STATUS_OK;
     }
@@ -87,9 +97,11 @@ Status SelectEventHandler::CloseWriteEvent(int fd) {
     auto iter = std::find(conn_fds_.begin(),conn_fds_.end(),fd);
     if(iter != conn_fds_.end()) {
         FD_CLR(fd,&writefds_);
-        *iter = -1;
-        if(fd == max_sock_fd_) {
-            max_sock_fd_ = *std::max_element(conn_fds_.begin(),conn_fds_.end());
+        if(!FD_ISSET(fd,&readfds_)) {
+            *iter = -1;
+            if(fd == max_sock_fd_) {
+                max_sock_fd_ = *std::max_element(conn_fds_.begin(),conn_fds_.end());
+            }
         }
         return STATUS_OK;
     }
